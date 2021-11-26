@@ -4,7 +4,7 @@ from torchinfo import summary
 
 
 class ResNet(nn.Module):
-    """ Modified ResNet-50 for audio embedding"""
+    """ Modified ResNet-34 for audio embedding"""
     def __init__(self, embed_dim=256, pretrained=False):
         super().__init__()
         base_model = models.resnet34(pretrained=pretrained)
@@ -13,7 +13,12 @@ class ResNet(nn.Module):
         layers = list(base_model.children())[:-1]
 
         self.backbone = nn.Sequential(*layers)
-        self.embedding = nn.Linear(base_model.fc.in_features, embed_dim)
+        self.embedding = nn.Sequential(
+            nn.Linear(base_model.fc.in_features, 512),
+            nn.ReLU(), nn.Dropout(p=0.2),
+            nn.Linear(512, embed_dim),
+        )
+        
 
     def forward(self, x):
         batch_size = x.shape[0]
