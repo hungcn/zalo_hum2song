@@ -65,7 +65,7 @@ def inference_hum(model, audio_dir, transform, sampling_rate, num_samples, devic
         torch.save(batch, audio_path.replace('mp3', 'pt'))
 
 
-def search_similar_song(hum_dir, song_dir, submit_file, n_song=10, distance_type='cosine'):
+def search_similar_song(hum_dir, song_dir, submit_file, n_song=10, distance_type='l2'):
     print(f"Search {n_song} songs by hum ...")
     hum_paths = os.path.join(hum_dir, '*.pt')
     hum_paths = natsorted(glob.glob(hum_paths))
@@ -84,10 +84,10 @@ def search_similar_song(hum_dir, song_dir, submit_file, n_song=10, distance_type
         hum = torch.load(hum_path)
         distances = []
         for song in songs:
-            if distance_type == 'cosine':
-                dis = 1 - F.cosine_similarity(hum, song)
-            elif distance_type == 'l2':
+            if distance_type == 'l2':
                 dis = torch.cdist(hum, song).squeeze()
+            elif distance_type == 'cosine':
+                dis = 1 - F.cosine_similarity(hum, song)
             min_dis = torch.min(dis).item()
             distances.append(min_dis)
         distances = np.array(distances)
