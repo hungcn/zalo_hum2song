@@ -4,11 +4,16 @@ from torchinfo import summary
 
 
 class ResNet(nn.Module):
-    """ Modified ResNet-50 for audio embedding"""
-    def __init__(self, embed_dim=128, pretrained=False):
+    """ Modified ResNet for audio embedding"""
+    def __init__(self, embed_dim=128, model_name='resnet18', pretrained=False):
         super().__init__()
-        base_model = models.resnet50(pretrained=pretrained)
-        # The first conv layer of resnet50 is changed to accept 1 channel input
+        if model_name == 'resnet18':
+            base_model = models.resnet18(pretrained=pretrained)
+        elif model_name == 'resnet34':
+            base_model = models.resnet34(pretrained=pretrained)
+        else:
+            base_model = models.resnet50(pretrained=pretrained)
+        # The first conv layer of resnet is changed to accept 1 channel input
         base_model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=1, padding=3, bias=False)
         layers = list(base_model.children())[:-1]
 
@@ -18,7 +23,6 @@ class ResNet(nn.Module):
             nn.ReLU(), nn.Dropout(p=0.2),
             nn.Linear(512, embed_dim)
         )
-        
 
     def forward(self, x):
         batch_size = x.shape[0]
@@ -29,6 +33,6 @@ class ResNet(nn.Module):
 
 
 if __name__ == "__main__":
-    model = ResNet(embed_dim=128)
+    model = ResNet()
     print(model)
-    summary(model, input_size=(4, 1, 128, 126))
+    summary(model, input_size=(4, 1, 80, 126))
