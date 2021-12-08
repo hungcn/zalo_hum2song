@@ -1,152 +1,151 @@
-import torch
+import torch, torchaudio
 from torch import nn
-from torch.utils.data import Dataset, DataLoader, dataset
-import torchaudio
+from torch.utils.data import Dataset
 import pandas as pd
-import numpy as np
-import time, random, os
-import librosa
+import random, os, glob
+from tqdm import tqdm
 
-torchaudio.set_audio_backend("sox_io")
 
+ANNOTATIONS_FILE = "../train/train_meta.csv"
+ROOT = '../'
+SAMPLING_RATE = 16000
+NUM_SAMPLES = SAMPLING_RATE * 8  # 8s
+SEGMENT_SIZE = SAMPLING_RATE * 2  # 2s
+STEP = 16000  # 1s
+MIN_AMPLITUDE = 0.0001
+
+
+def _resample_signal(signal, sr, target_sr=16000):
+    if sr != target_sr:
+        resampler = torchaudio.transforms.Resample(sr, target_sr)
+        signal = resampler(signal)
+    return signal
+
+
+def _mix_down_signal(signal):
+    if signal.shape[0] > 1:
+        signal = torch.mean(signal, dim=0, keepdim=True)
+    return signal
+
+
+def _strip_signal(signal, min_amplitude):
+    signal_length = signal.shape[1]
+    left = 0
+    while left < signal_length and abs(signal[0][left]) < min_amplitude:
+        left += 1
+    right = signal_length - 1
+    while right >= 0 and abs(signal[0][right]) < min_amplitude:
+        right -= 1
+    if left < right:
+        signal = signal[:, left:right + 1]
+    return signal
+
+
+def _resize_signal(signal, num_samples, min_amplitude=0.0001):
+    if signal.shape[1] > num_samples:
+        signal = _strip_signal(signal, min_amplitude)
+        if signal.shape[1] > num_samples:
+            signal = signal[:, :num_samples]
+    if signal.shape[1] < num_samples:
+        pad_length = num_samples - signal.shape[1]
+        signal = nn.functional.pad(signal, (0, pad_length))
+    return signal
 
 class Hum2SongDataset(Dataset):
-
-    def __init__(self, root, annotations_file, transform, target_sampling_rate,
-                 num_samples, min_amplitude):
+    "MelSpectrogram dataset for Hum-To-Song task"
+    def __init__(self, root, annotations_file, transform):
+        super().__init__()
         df = pd.read_csv(annotations_file)
-        df['song_path'] = df['song_path'].apply(lambda x: os.path.join(root, x))
-        df['hum_path'] = df['hum_path'].apply(lambda x: os.path.join(root, x))
-        df['music_id'] = df['music_id'].astype(str)
-
+        df['song_path'] = df['song_path'].apply(lambda x: os.path.join(root, x).replace('mp3', 'mel'))
+        df['hum_path'] = df['hum_path'].apply(lambda x: os.path.join(root, x).replace('mp3', 'mel'))
         self.annotations = df
-        self.id_to_hums = self._get_id_song_dict()
-        self.ids = list(self.id_to_hums.keys())
+        self.ids = sorted(list(set(self.annotations['music_id'].to_list())))
         self.transform = transform
-        self.target_sampling_rate = target_sampling_rate
-        self.num_samples = num_samples
-        self.min_amplitude = min_amplitude
+        self.id_to_label = {music_id: i for i, music_id in enumerate(self.ids)}
 
+    def _get_song_hum_by_id(self, music_id : int):
+        rows = self.annotations[self.annotations['music_id'] == music_id]
+        pairs = rows.values[:, 1:].tolist()
+        return pairs
+    
     def __len__(self):
         return len(self.annotations)
 
     def __getitem__(self, index):
         hum_path = self.annotations.iloc[index, 2]
-        hum, hum_sr = torchaudio.load(hum_path)
-        hum = self._preprocess(hum, hum_sr)
-
+        hum = torch.load(hum_path)
+        
         song_path = self.annotations.iloc[index, 1]
-        song, song_sr = torchaudio.load(song_path)
-        song = self._preprocess(song, song_sr)
+        song = torch.load(song_path)
 
         music_id = self.annotations.iloc[index, 0]
-        ids = [x for x in self.ids if x != music_id]
-        wr_music_id = random.choice(ids)
-        wr_hum_path = random.choice(self.id_to_hums[wr_music_id])
-        wr_hum, sr = torchaudio.load(wr_hum_path)
-        wr_hum = self._preprocess(wr_hum, sr)
 
-        return hum, song, wr_hum
+        # wr_ids = [x for x in self.ids if x != music_id]
+        # wr_music_id = random.choice(wr_ids)
+        # wr_pairs = self._get_song_hum_by_id(wr_music_id)
+        # _, wr_hum_path = random.choice(wr_pairs)
+        # wr_hum = torch.load(wr_hum_path)
 
-    def _get_id_song_dict(self):
-        ids = list(set(self.annotations['music_id'].to_list()))
-        id_to_hums = dict.fromkeys(ids)
-        for _, row in self.annotations.iterrows():
-            if id_to_hums[row['music_id']] is None:
-                id_to_hums[row['music_id']] = [row['hum_path']]
-            else:
-                id_to_hums[row['music_id']].append(row['hum_path'])
-        return id_to_hums
+        if self.transform:
+            hum = self.transform(hum)
+            song = self.transform(song)
+            # wr_hum = self.transform(wr_hum)
 
-    def _preprocess(self, signal, sr):
-        # resample to fixed sampling rate
-        signal = Hum2SongDataset._resample_signal(signal, sr, self.target_sampling_rate)
-        # stereo sound -> mono sound
-        signal = Hum2SongDataset._mix_down_signal(signal)
-        # resize sample to fixed length
-        signal = Hum2SongDataset._resize_signal(signal, self.num_samples, self.min_amplitude)
-        # get mel-spectrogram features
-        signal = self.transform(signal)
-        return signal
+        return hum, song, self.id_to_label[music_id]
 
-    @staticmethod
-    def _resample_signal(signal, sr, target_sr=16000):
-        if sr != target_sr:
-            resampler = torchaudio.transforms.Resample(sr, target_sr)
-            signal = resampler(signal)
-        return signal
 
-    @staticmethod
-    def _mix_down_signal(signal):
-        if signal.shape[0] > 1:
-            signal = torch.mean(signal, dim=0, keepdim=True)
-        return signal
+def audios_to_mels(audio_dir, save_dir, to_melspectrogram, 
+                    target_sr=SAMPLING_RATE,
+                    num_samples=NUM_SAMPLES,
+                    segment_size=SEGMENT_SIZE,
+                    step=STEP,
+                    min_amplitude=MIN_AMPLITUDE):
 
-    @staticmethod
-    def _strip_signal(signal, min_amplitude):
-        signal_length = signal.shape[1]
-        left = 0
-        while left < signal_length and abs(signal[0][left]) < min_amplitude:
-            left += 1
-        right = signal_length - 1
-        while right >= 0 and abs(signal[0][right]) < min_amplitude:
-            right -= 1
-        if left < right:
-            signal = signal[:, left:right + 1]
-        return signal
+    _audio_ext = 'mp3'
+    print(f"Convert {_audio_ext} audios in '{audio_dir}' to mel-spectrograms and store in '{save_dir}' ...")
+    
+    assert os.path.isdir(audio_dir)
+    audio_paths = glob.glob(os.path.join(audio_dir, f'*.{_audio_ext}'))
+    os.makedirs(save_dir, exist_ok=True)
 
-    @staticmethod
-    def _resize_signal(signal, num_samples, min_amplitude=0.004):
-        if signal.shape[1] > num_samples:
-            signal = Hum2SongDataset._strip_signal(signal, min_amplitude)
-            if signal.shape[1] > num_samples:
-                signal = signal[:, :num_samples]
-        if signal.shape[1] < num_samples:
-            pad_length = num_samples - signal.shape[1]
-            signal = nn.functional.pad(signal, (0, pad_length))
-        return signal
+    for audio_path in tqdm(audio_paths):
+        audio, sr = torchaudio.load(audio_path)
+        # stereo -> mono
+        audio = _mix_down_signal(audio)
+        # resample to target sampling rate
+        audio = _resample_signal(audio, sr, target_sr)
+        # resize signal to fixed length
+        audio = _resize_signal(audio, num_samples, min_amplitude)
+        mels = []
+        for i in range(0, num_samples - segment_size + 1, step):
+            # get mel-spectrogram features
+            mel = to_melspectrogram(audio[:, i:i+segment_size])
+            mels.append(mel)
+        batch = torch.stack(mels).squeeze(1)
+        # save batch tensor for later training
+        save_path = os.path.join(save_dir, os.path.basename(audio_path).replace(f'{_audio_ext}', 'mel'))
+        torch.save(batch, save_path)
 
 
 if __name__ == "__main__":
-
-    ANNOTATIONS_FILE = "../train/train_meta.csv"
-    ROOT = '../'
-    SAMPLING_RATE = 16000
-    NUM_SAMPLES = SAMPLING_RATE * 8  # get 8s audio
-    MIN_AMPLITUDE = 0.004
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print("Device:", device)
-    print("------------")
 
     to_melspectrogram = torchaudio.transforms.MelSpectrogram(
         sample_rate=SAMPLING_RATE,
         n_fft=1024,
         hop_length=256,
-        n_mels=128,
-        f_min=20,
-        # f_max=22000
+        n_mels=80,
+        f_min=0,
+        f_max=8000
     )
 
-    start = time.time()
-    hum2song = Hum2SongDataset(
-        root=ROOT,
-        annotations_file=ANNOTATIONS_FILE,
-        transform=to_melspectrogram,
-        target_sampling_rate=SAMPLING_RATE,
-        num_samples=NUM_SAMPLES,
-        min_amplitude=MIN_AMPLITUDE
+    audios_to_mels(
+        audio_dir='../train_mp3/hum',
+        save_dir='../train_mel_80x251/hum',
+        to_melspectrogram=to_melspectrogram
     )
-    train_loader = DataLoader(
-        hum2song, 
-        batch_size=4, 
-        shuffle=True, 
-        # num_workers=2,
-        drop_last=False
+
+    audios_to_mels(
+        audio_dir='../train_mp3/song',
+        save_dir='../train_mel_80x251/song',
+        to_melspectrogram=to_melspectrogram
     )
-    print(f"There are {len(hum2song)} samples in the dataset.")
-
-    hum, song, wr_song = next(iter(train_loader))
-    print(hum.shape, song.shape, wr_song.shape)
-
-    print("Time elapsed:", time.time() - start)
