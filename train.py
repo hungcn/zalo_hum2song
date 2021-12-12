@@ -3,7 +3,7 @@ import torch
 from torch import nn, optim
 from torch.utils.data import DataLoader
 import torchaudio.transforms as T
-import os
+import os, argparse
 import pandas as pd
 
 from dataset import MelDataset
@@ -99,6 +99,10 @@ def train(model, optimizer, start_epoch, cfg, device="cuda"):
       
     
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--prepare_mels', action='store_true')
+
+    args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("Device:", device)
@@ -106,9 +110,10 @@ if __name__ == "__main__":
 
     cfg = utils.read_yaml('config.yaml')
 
-    to_melspectrogram = utils.to_melspectrogram(cfg)
-    print("Preparing mels dataset from audios ...")
-    prepare_meldataset(cfg, to_melspectrogram)
+    if args.prepare_mels:
+        to_melspectrogram = utils.to_melspectrogram(cfg)
+        print("Preparing mels dataset from audios ...")
+        prepare_meldataset(cfg, to_melspectrogram)
 
     model = ResNet(embed_dim=cfg['embed_dim'])
     optimizer = optim.SGD(model.parameters(), lr=cfg['learning_rate'], weight_decay=cfg['weight_decay'])
