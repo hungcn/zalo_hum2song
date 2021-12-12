@@ -5,11 +5,11 @@ from torchinfo import summary
 
 class ResNet(nn.Module):
     """ Modified ResNet for audio embedding"""
-    def __init__(self, embed_dim=128, model_name='resnet18', pretrained=False):
+    def __init__(self, embed_dim=128, backbone='resnet18', pretrained=False):
         super().__init__()
-        if model_name == 'resnet18':
+        if backbone == 'resnet18':
             base_model = models.resnet18(pretrained=pretrained)
-        elif model_name == 'resnet34':
+        elif backbone == 'resnet34':
             base_model = models.resnet34(pretrained=pretrained)
         else:
             base_model = models.resnet50(pretrained=pretrained)

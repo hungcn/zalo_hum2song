@@ -1,69 +1,81 @@
 from torch.utils.tensorboard import SummaryWriter
 import torch
-import torchaudio
 from torch import nn, optim
 from torch.utils.data import DataLoader
+import torchaudio.transforms as T
 import os
+import pandas as pd
 
-from dataset import Hum2SongDataset
+from dataset import MelDataset
 from model import ResNet
+import utils
+from pytorch_metric_learning import losses 
 
 
-SAVE_DIR = 'checkpoints'
-LOG_DIR = 'logs'
-ANNOTATIONS_FILE = "train/train_meta.csv"
-AUDIO_DIR = "train"
-SAMPLING_RATE = 16000
-MIN_AMPLITUDE = 0.004
-NUM_SAMPLES = SAMPLING_RATE * 8  # get 8s audio
-LEARNING_RATE = 0.001
-BATCH_SIZE = 16
-NUM_EPOCH = 100
 
+def prepare_meldataset(cfg, to_melspectrogram):
+    train_hum_dir = os.path.join(cfg['root'], cfg['train_hum_dir'])
+    train_song_dir = os.path.join(cfg['root'], cfg['train_song_dir'])
 
-def train(model, optimizer, batch_size, num_epoch, device="cuda"):
-    transform = torchaudio.transforms.MelSpectrogram(
-        sample_rate=SAMPLING_RATE,
-        n_fft=1024,
-        hop_length=256,
-        n_mels=128,
-        f_min=20,
-        # f_max=22000
+    if os.path.isdir(train_hum_dir) and os.path.isdir(train_song_dir):
+        return
+
+    df = pd.read_csv(os.path.join(cfg['root'], cfg['annotation_file']))
+    df['song_path'] = df['song_path'].apply(
+        lambda x: x.replace(cfg['audio_ext'], 'mel').replace(cfg['song_dir'], cfg['train_song_dir'])
     )
-    train_dataset = Hum2SongDataset(
-        ANNOTATIONS_FILE,
-        transform,
-        SAMPLING_RATE,
-        NUM_SAMPLES,
-        MIN_AMPLITUDE
+    df['hum_path'] = df['hum_path'].apply(
+        lambda x: x.replace(cfg['audio_ext'], 'mel').replace(cfg['hum_dir'], cfg['train_hum_dir'])
     )
+    meta_file = os.path.join(cfg['root'], cfg['train_meta'])
+    os.makedirs(os.path.dirname(meta_file), exist_ok=True)
+    df.to_csv(meta_file, index=False)
+
+    utils.audios_to_mels(
+        audio_dir=os.path.join(cfg['root'], cfg['hum_dir']),
+        save_dir=train_hum_dir,
+        to_melspectrogram=to_melspectrogram,
+        cfg=cfg
+    )
+    utils.audios_to_mels(
+        audio_dir=os.path.join(cfg['root'], cfg['song_dir']),
+        save_dir=train_song_dir,
+        to_melspectrogram=to_melspectrogram,
+        cfg=cfg
+    )
+
+
+def train(model, optimizer, start_epoch, cfg, device="cuda"):
+    transform = nn.Sequential(
+        T.FrequencyMasking(freq_mask_param=10),
+        T.TimeMasking(time_mask_param=20)
+    )
+    train_dataset = MelDataset(cfg, transform)
     train_loader = DataLoader(
         train_dataset, 
-        batch_size=batch_size, 
+        batch_size=cfg['batch_size'], 
         shuffle=True, 
         num_workers=2,
         drop_last=False
     )
-    criterion = nn.TripletMarginLoss()
+    criterion = losses.MultiSimilarityLoss()
 
-    writer = SummaryWriter(LOG_DIR)
+    writer = SummaryWriter(cfg['log_dir'])
 
     model.train()
-    step = 0
-    for epoch in range(1, num_epoch + 1):
-        print(f'==================== Epoch [{epoch}/{num_epoch}] ====================')
+    step = (start_epoch-1) * len(train_loader)
 
-        for i, (hum, song, wr_hum) in enumerate(train_loader):
-            anchor = song.to(device)
-            possitive = hum.to(device)
-            negative = wr_hum.to(device)
+    for epoch in range(start_epoch, cfg['num_epochs'] + 1):
+        print(f"==================== Epoch [{epoch}/{cfg['num_epochs']}] ====================")
+        for i, (mels, labels) in enumerate(train_loader):
+            mels = mels.reshape(-1, 1, mels.size(-2), mels.size(-1))
+            labels = labels.reshape(-1).to(device)
 
+            mels = mels.to(device)
+            embeddings = model(mels)
+            
             # Train model
-            emb_anc = model(anchor)
-            emb_pos = model(possitive)
-            emb_neg = model(negative)
-            loss = criterion(emb_anc, emb_pos, emb_neg)
-
+            loss = criterion(embeddings, labels)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -75,15 +87,16 @@ def train(model, optimizer, batch_size, num_epoch, device="cuda"):
             writer.add_scalar("Loss", loss.item(), step)
             step += 1
 
-        os.makedirs(SAVE_DIR, exist_ok=True)
+        os.makedirs(cfg['save_dir'], exist_ok=True)
         # Save the model checkpoints 
-        if epoch % 5 == 0:
+        if epoch % 10 == 0:
             torch.save(
                 {'model': model.state_dict(),
-                'optimizer': optimizer.state_dict()}, 
-                os.path.join(SAVE_DIR, f'model_{epoch}.pth')
-            )            
-
+                'optimizer': optimizer.state_dict(),
+                'epoch': epoch}, 
+                os.path.join(cfg['save_dir'], f'model_{epoch}.pth')
+            )      
+      
     
 if __name__ == "__main__":
 
@@ -91,17 +104,34 @@ if __name__ == "__main__":
     print("Device:", device)
     print("------------")
 
-    model = ResNet()
-    # model.load_state_dict(torch.load('checkpoints/model_10.pth')['model'])
-    model = model.to(device)
+    cfg = utils.read_yaml('config.yaml')
 
-    optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE)
+    to_melspectrogram = utils.to_melspectrogram(cfg)
+    print("Preparing mels dataset from audios ...")
+    prepare_meldataset(cfg, to_melspectrogram)
+
+    model = ResNet(embed_dim=cfg['embed_dim'])
+    optimizer = optim.SGD(model.parameters(), lr=cfg['learning_rate'], weight_decay=cfg['weight_decay'])
+
+    start_epoch = 1
+
+    if cfg['checkpoint_path'] is None:
+        start_epoch = 1
+        model.apply(utils.weights_init)
+    else:
+        checkpoint = torch.load(cfg['checkpoint_path'])
+        model.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        start_epoch = checkpoint['epoch'] + 1
+
+    model = torch.jit.script(model).to(device)
+    utils.optimizer_to(optimizer, device)
 
     train(
         model=model, 
-        optimizer=optimizer,
-        batch_size=BATCH_SIZE, 
-        num_epoch=NUM_EPOCH, 
+        optimizer=optimizer, 
+        start_epoch=start_epoch, 
+        cfg=cfg,
         device=device
     )
 
