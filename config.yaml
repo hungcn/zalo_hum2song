@@ -1,0 +1,49 @@
+# model
+backbone: 'resnet18'
+embed_dim: 128  # size of embedding vector
+checkpoint_path: 'checkpoints/model_820.pth'  # or null, to train from scratch
+
+# data
+root: './data'
+audio_ext: 'mp3'
+
+hum_dir: 'train/hum'  # contains audios
+song_dir: 'train/song'  # contains audios
+annotation_file: 'train/train_meta.csv'
+
+train_hum_dir: 'train_mel/hum'  # contains mel-spectrograms (.mel files)
+train_song_dir: 'train_mel/song'  # contains mel-spectrograms
+train_meta: 'train_mel/train_meta.csv'
+
+test_hum_dir: 'public_test/hum'   # contains audios
+test_song_dir: 'public_test/full_song'  # contains audios
+
+sampling_rate: 16000
+
+# mel-spectrogram transformation
+n_mels: 80
+n_fft: 1024
+hop_length: 256
+f_min: 0
+f_max: 8000
+
+# audio preprocessing
+max_num_samples: 1440000  # 90s length
+num_samples: 128000  # 8s length
+train_segment_size: 32000  # 2s length
+test_segment_size: 48000  # 3s length
+hop_size: 16000  # 1s length
+min_amplitude: 0.0001
+
+# for training
+log_dir: './logs'
+save_dir: './checkpoints'
+num_epochs: 1000
+batch_size: 1
+learning_rate: 0.001
+weight_decay: 0.00001
+
+# for prediction
+n_songs: 10
+distance_type: 'cosine'  # or l2, dot
+

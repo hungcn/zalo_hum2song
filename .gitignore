@@ -2,3 +2,9 @@ __pycache__/
 .vscode
 logs/
 checkpoints/
+result/
+data/train/hum
+data/train/song
+data/train_mel/hum
+data/train_mel/song
+data/public_test/
