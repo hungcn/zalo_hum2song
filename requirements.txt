@@ -1,0 +1,7 @@
+pytorch-metric-learning
+tqdm
+pyyaml
+natsort
+pandas
+numpy
+torchinfo
