@@ -27,11 +27,6 @@ data/
 
 For default, prediction will run with 'public_test/hum' and 'public_test/full_song'
 
-If run predict.sh with this docker (which have cuda installed), you should include '--gpus all'
-```
-e.g: sudo docker run --gpus all -v [path to data/ contains public_test]:/data -v [current dir]:/result [docker name] /bin/bash /model/predict.sh
-```
-
 ## Training:
 - Run: ```python train.py --prepare_mels```
 
