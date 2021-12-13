@@ -4,7 +4,7 @@ embed_dim: 128  # size of embedding vector
 checkpoint_path: 'checkpoints/model_820.pth'  # or null, to train from scratch
 
 # data
-root: './data'
+root: '../data'
 audio_ext: 'mp3'
 
 hum_dir: 'train/hum'  # contains audios
@@ -15,8 +15,14 @@ train_hum_dir: 'train_mel/hum'  # contains mel-spectrograms (.mel files)
 train_song_dir: 'train_mel/song'  # contains mel-spectrograms
 train_meta: 'train_mel/train_meta.csv'
 
+
+# ========== Change here for prediction =======================
+
 test_hum_dir: 'public_test/hum'   # contains audios
 test_song_dir: 'public_test/full_song'  # contains audios
+
+# =============================================================
+
 
 sampling_rate: 16000
 

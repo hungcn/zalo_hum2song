@@ -138,7 +138,7 @@ if __name__ == "__main__":
     search_similar_song(
         hum_dir=HUM_DIR,
         song_dir=SONG_DIR,
-        submit_file='result/submission.csv',
+        submit_file='../result/submission.csv',
         n_songs=cfg['n_songs'],
         distance_type=cfg['distance_type'],
         _ext=cfg['audio_ext']
