@@ -23,7 +23,7 @@ data/
 ## Prediction:
 - Put test data folder into **data/** <br>
 - Change path in **test_hum_dir** and **test_song_dir** in config.yaml <br>
-- Run: ```./predict.sh```
+- Run: ```python predict.py```
 
 For default, prediction will run with 'public_test/hum' and 'public_test/full_song'
 
